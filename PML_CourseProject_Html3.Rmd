@@ -1,0 +1,368 @@
+---
+title: "Identification of Correct Barbell Exercise Execution Using Machine Learning"
+author: "Sam Vacik"
+date: "1/29/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Human Activity Recognition (HAR) aims to identify movement type and performance based on physical data gathered by personal electronic devices such as Jawbone Up, Nike Fuelband, or Google Fitbit. Many users wear these devices during exercise, gain data with the desire to identify correct or poor execution, and then improve their technique In this data analysis, ten machine learning models will be built and tested to determine the best model capable of identifying the correct execution of a barbell lift independent of individual users. The best model will be used in the assessment to gauge effectiveness in apply practical machine learning to a real case to complete Practical Machine Learning through Coursera.
+
+The dataset was available for download through the Practical Machine Learning Course Project web page on Coursera and information about the data was provided through the Human Activity Recognition data website (see the link in the following section). It was split into a different training and testing sets for this project. Only the training data is used in this project.
+
+## Exploratory Analysis & Data Cleaning
+
+The [Human Activity Recognition dataset](https://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) is utilized in this data analysis (see citation). The HAR dataset was collected from six  participants who performed 10 repetitions of the dumbbell biceps curl in five ways, as documented in the "classe" variable in the dataset. Each participant worse a series of three-axial sensors positioned on the upper arm, wrist, waist, and one end of the barbell. Each variant of the biceps curl was assigned a classe letter from A to E. The class A variant represents correct execution of a biceps curl and the others correlate to incorrect execution. Each study participant possessed minimal experience of the dumbbell biceps curl and received supervision of their exercise execution by professional fitness experts. This study utilizes the training data set (file name "pml-training.csv") available through the HAR dataset. 
+```{r, include=FALSE}
+# Function definitions
+CapLet2num <- function(x) {utf8ToInt(x) - utf8ToInt("A") + 1L}
+
+Round2Int <- function(x) {a <- round(x, digits=0);for(i in 1:length(a[])){ if(a[[i]] <=0){a[[i]] <- 1}; if(a[[i]] > 5){a[[i]] <- 5} }; return(a)}
+
+modagg <- function(x,y) { testright <- y == x$classe; return(table(x, testright))  }
+
+modacc <- function(x,y){return(table(x,y))}
+
+PerfMets <- function(preds, testdat) {return(data.frame( R2 = R2(preds, testdat$classe),RMSE = RMSE(preds, testdat$classe), MAE = MAE(preds,testdat$classe)))}
+
+ErrStat <- function(predz, testz){
+     ErrorMatrix <- data.frame(matrix(data = 0, nrow=1, ncol=9))
+     names(ErrorMatrix) <- c("TP", "FP", "FN", "TN", "Sens", "Specs", "PosPredVal", "NegPredVal", "Acc")
+     for(i in 1:length(predz[])){
+          if(predz[[i]] == 1 & testz[i,dim(testset)[[2]]] == 1){
+               # True Positive
+               ErrorMatrix[1,1] <- ErrorMatrix[1,1] + 1
+          } 
+          else if(predz[[i]] == 1 & testz[i,dim(testset)[[2]]] > 1){
+               # False Positive
+               ErrorMatrix[1,2] <- ErrorMatrix[1,2] + 1
+          } 
+          else if(predz[[i]] > 1 & testz[i,dim(testset)[[2]]] > 1){  #& predz[[i]] == testz[i,120]){
+               # True Negative
+               ErrorMatrix[1,4] <- ErrorMatrix[1,4] + 1
+          } 
+          else if(predz[[i]] > 1 & testz[i,dim(testset)[[2]]] == 1){
+               # False Negative
+               ErrorMatrix[1,3] <- ErrorMatrix[1,3] + 1
+          }
+     }
+     #Calculate Sensitivity ("Sens")
+     ErrorMatrix[1,5] <- ErrorMatrix[1,1] / (ErrorMatrix[1,1] + ErrorMatrix[1,3])
+     #Calculate Specificity ("Specs")
+     ErrorMatrix[1,6] <- ErrorMatrix[1,4] / (ErrorMatrix[1,2] + ErrorMatrix[1,4])
+     #Calculate Positive PRedictive Value
+     ErrorMatrix[1,7] <- ErrorMatrix[1,1] / (ErrorMatrix[1,1] + ErrorMatrix[1,2])
+     # Calculate Negative Predictive Value
+     ErrorMatrix[1,8] <- ErrorMatrix[1,4] / (ErrorMatrix[1,3] + ErrorMatrix[1,4])
+     # Calculate Accuracy
+     ErrorMatrix[1,9] <- (ErrorMatrix[1,1] + ErrorMatrix[1,4]) / (ErrorMatrix[1,1] + ErrorMatrix[1,2] + ErrorMatrix[1,3] + ErrorMatrix[1,4])
+     return(ErrorMatrix)
+}
+
+# Import libraries
+library(caret); library(ggplot2)
+
+#Load input data file using read library csv function.
+trains <- read.csv("pml-training.csv")
+tests <- read.csv("pml-testing.csv")
+dim(trains)
+
+# Remove teh columns identifying user names, date, time, etc. in the first seven rows.
+#trains <- trains[,8:length(trains[1,])]
+tests <- tests[,8:length(tests[1,])]
+
+# Clean data and subset data to remove NAs and other non-numbers.
+#Find any NAs and remove them. Remove any Div/0 numbers as well.
+tests <- tests[colSums(!is.na(tests)) > 0]
+#testColnames <- names(tests[,1:52])
+trains1 <- trains[,c(names(tests[,1:52]))]
+trains1$classe <- unname(sapply(trains$classe, CapLet2num))
+
+#trainNAs <- sum(is.na(trains)); testNAs <- sum(is.na(tests))
+#CCs <- complete.cases(trains); trains <- trains[CCs == 1,]
+#trains <- trains[-grep("#DIV/0!",trains)]
+
+# Using classe as letters.
+#trains$classe <- factor(as.character(trains$classe))
+
+# Using classe as numbers.
+# Convert classe variable type character to numbers. Replace A, B, C... with 1, 2, 3...
+#trains1$classe <- unname(sapply(trains1$classe, CapLet2num)) 
+
+```
+```{r echo=FALSE, include=FALSE}
+# 1. Set error rate
+lilp <- 0.75
+seed <- 1
+modelCtrl <- trainControl(number = 1)
+
+# 2. Split data into >> Training, Testing, & Validation (optional)
+set.seed(seed)
+inTrain <- createDataPartition(y=trains1$classe, p = lilp, list=FALSE)
+trainset <- trains1[inTrain,]; testset <- trains1[-inTrain,]
+```
+Data exploration and cleaning began by examination of the training set. The testing dataset will be similarly be examined and cleaned up before application of the chosen ML algorithm. The first seven columns of each data set contain data related to the user, date, time, and windows conducted. As the goal of this exercise is to build a prediction model of correct movements independent of user and temporal data, these columns were removed from the dataset. The training set was (`r dim(read.csv("pml-training.csv"))`) (rows by columns). The data set contained NA and "#DIV/0!" values and were removed. This reduced the training and testing sets to (`r dim(trains1)`) rows by columns. The number of predictors was 52 variables. Lastly, the classe variable contains alphabetic letters (from "A" to "E" corresponding with various barbell executions) that proved difficult to handle for the machine learning algorithms (even with setting the classe variable to a factor); the letters were converted to numbers of 1 to 5 (i.e. "A" replaced by 1, "B" replaced by 2, and so forth).
+
+This data analysis utilized a leave-one out cross-validation (LOOCV) approach using random sampling with a chosen error rate of 0.75 to split the original training data set into a training and testing subsets.
+
+Initial data exploration occurred with a few variables. The data were fairly scattered in relation to classe, but there still appear possible linear and polynomial trends between some predictors and classe. The random sampling of the training data set into new training and testing subsets resulted in similar  distribution as seen in Figure 1. There is a higher frequency of the classe variable equating to values of 1, 2, and 3 in the training subset than in the testing subset. Additionally, the frequencies of classe equating to 3 and 4 in the testing subset are nearly equal. These slight differences between the two distributions may lead to bias in some of the models.
+
+```{r echo=FALSE, cache = TRUE, fig.width=7, fig.height=4}
+#par(mfrow=c(1,2))
+#featurePlot(x=trainset[,c("total_accel_belt", "total_accel_arm", "total_accel_forearm", "total_accel_dumbbell")], y=trainset$classe, plot="pairs")
+#featurePlot(x=trainset[,c("roll_belt", "roll_arm", "roll_forearm", "roll_dumbbell")], y=trainset$classe, plot="pairs")
+```
+```{r echo=FALSE, fig.width=7, fig.height=4}
+par(mfrow=c(1,2))
+hist(trainset$classe, main="Histogram Training Subset: Classe", xlab = "Classe")
+hist(testset$classe, main="Histogram Testing Subset: Classe", xlab="Classe")
+```
+
+**Figure 1 Training/Testing Subset Histograms:** Histograms of the training and testing subsets as split from the original training set (pml-training.csv from the HAR dataset).
+
+## Data Analysis 
+
+As seen in Table 1, this experiment tested ten machine learning methods available through the train function of the R package caret to determine which model performed best in identifying correct barbell exercise execution (independent of user and denoted by classe variable equal to "A" or 1) and the predict function was used to predict correct movement from each model on the testing subset.
+
+```{r echo=FALSE}
+dfmethods <- data.frame("Method" = c("General Linear Model", "K-Nearest Neighbors", "Bayesian Ridge Regression", "Random Forest", "Treebagging", "Model Tree 5", "Quantile Random Forest", "Multivariate Adaptive, Regression (MARS) - earth", "Cubist", "Bayesian Random Neural Networks"), "Acronyms" = c("GLM", "KKNN", "BRIDGE", "RF", "TBAG", "M5", "QRF", "Earth", "Cubist", "BRNN"))
+print(dfmethods)
+```
+**Table 1 Machine Learning (ML) Methods:** Machine Learning methods used in this experiment and acronym definitions.
+
+The best performing algorithm was chosen based on which achieved the best performance and error metrics against the training and testing sets. The performance metrics included the r-squared (R^2), root mean square error (RMSE), and the mean absolute error (MAE). The error metrics included the counts of true positives (TP), false positives (FP), false negatives (FN), and true negatives (TN) in addition to sensitivity (Sens), specificity (Specs), positive predictive value (PosPredVal), negative predictive value (NegPredVal), and the accuracy (Acc). For example, the best algorithm would achieve the highest R^2, lowest RMSE, and lowest MAE while maximizing the TP/TN values and minimizing the FP/FN values. For additional consideration between models with similar performance and errors statistics based on the correct barbell execution (classe equaled "A" or 1), the final model error rates were plotted along with the confusion matrices for just the top performing models.
+
+## Results
+
+```{r echo=FALSE, include=FALSE}
+# 3. On the training set, pick features. (Use cross-validation)
+# General Linear REgression / Model
+set.seed(seed)
+fitglm <- train(classe ~., data=trainset, method="glm", trControl = modelCtrl)
+preglm <- predict(fitglm, newdata=testset)
+preglm2 <- Round2Int(preglm)
+glmperf <- PerfMets(preglm2, testset)
+glmresults <- fitglm$results
+glmerr <- ErrStat(preglm2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+# Linear Model / Linear REgression
+#method = qrnn "Quantized regression neural network"; tp 13; acc 0.53
+# method = RRF; tp = 10; acc = 0.58
+# kknn TP FP FN TN      Sens     Specs PosPredVal NegPredVal
+#1 13  2 30 34 0.3023256 0.9444444  0.8666667    0.53125
+#        Acc
+#1 0.5949367
+set.seed(seed)
+fitlm <- train(classe ~ ., data=trainset, method="kknn", trControl = modelCtrl)
+predlm <- predict(fitlm, newdata=testset)
+predlm2 <- Round2Int(predlm)
+lmperf <- PerfMets(predlm2, testset)
+lmresults <- fitlm$results
+lmerr <- ErrStat(predlm2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+# CART
+set.seed(seed)
+fitrpart <- train(classe ~., data=trainset, method="bridge", trControl = modelCtrl)
+predrpart <- predict(fitrpart, newdata=testset)
+predrpart2 <- Round2Int(predrpart)
+rpartperf <- PerfMets(predrpart2, testset)
+rpartresults <- fitrpart$results
+rparterr <- ErrStat(predrpart2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+# Random Forests
+set.seed(seed)
+fitrf <- train(classe ~ ., data=trainset, method="rf", trControl = modelCtrl, prox=TRUE)
+predrf <- predict(fitrf, testset)
+predrf2 <- Round2Int(predrf)
+rfperf <- PerfMets(predrf2, testset)
+rfresults <- fitrf$results
+rferr <- ErrStat(predrf2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+set.seed(seed)
+fittbag <- train(classe ~ ., data=trainset, method="treebag", trControl = modelCtrl)
+predtbag <- predict(fittbag, testset)
+predtbag2 <- Round2Int(predtbag)
+tbagperf <- PerfMets(predtbag2, testset)
+tbagresults <- fittbag$results
+tbagerr <- ErrStat(predtbag2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+set.seed(seed)
+# Model Tree
+fitqreg <- train(classe ~ ., data=trainset, method="M5", trControl = modelCtrl)
+predqreg <- predict(fitqreg, testset)
+predqreg2 <- Round2Int(predqreg)
+qregperf <- PerfMets(predqreg2, testset)
+qregresults <- fitqreg$results
+qregerr <- ErrStat(predqreg2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+set.seed(seed)
+# Quantile RF
+fitqrf <- train(classe ~ ., data=trainset, method="qrf", trControl = modelCtrl)
+predqrf <- predict(fitqrf, testset)
+predqrf2 <- Round2Int(predqrf)
+qrfperf <- PerfMets(predqrf2, testset)
+qrtresults <- fitqrf$results
+qrferr <- ErrStat(predqrf2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+set.seed(seed)
+# Multivariate Adaptive Regression Splines
+fitearth <- train(classe ~ ., data=trainset, method="earth", trControl = modelCtrl)
+predearth <- predict(fitearth, testset)
+predearth2 <- Round2Int(predearth)
+earthperf <- PerfMets(predearth2, testset)
+earthresults <- fitearth$results
+eartherr <- ErrStat(predearth2, testset)
+```
+```{r echo=FALSE, include=FALSE}
+set.seed(seed)
+# Self-Organizing Maps
+fitxyf <- train(classe ~ ., data=trainset, method="cubist", trControl = modelCtrl)
+predxyf <- predict(fitxyf, testset)
+predxyf2 <- Round2Int(predxyf)
+xyfperf <- PerfMets(predxyf2, testset)
+xyfresults <- fitxyf$results
+xyferr <- ErrStat(predxyf2, testset)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(seed)
+# Bayesian Regularlized Neural Networks
+fitbrnn <- train(classe ~ ., data=trainset, method="brnn", trControl = modelCtrl)
+predbrnn <- predict(fitbrnn, testset)
+predbrnn2 <- Round2Int(predbrnn)
+brnnperf <- PerfMets(predbrnn2, testset)
+brnnresults <- fitbrnn$results
+brnnerr <- ErrStat(predbrnn2, testset)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(seed)
+# 4. On the training set, pick prediction function. (Use cross-validation.)
+
+#. 5. If no validation, apply 1x to test set
+
+# 6. If validation, apply to test set and refine. Apply 1x to validation.
+
+# Build a data frame of the performance metrics.
+PerfMetrics <- data.frame(matrix(nrow=10, ncol=7))
+names(PerfMetrics) <- c("Method", "Train-R2", "Train-RMSE", "Train-MAE", "Test-R2", "Test-RMSE", "Test-MAE")
+PerfMetrics[1,] <- c("GLM", glmresults$Rsquared[1], glmresults$RMSE[1], glmresults$MAE[1], glmperf)
+PerfMetrics[2,] <- c("KKNN", lmresults$Rsquared[1], lmresults$RMSE[1], lmresults$MAE[1], lmperf)
+PerfMetrics[3,] <- c("Bridge", rpartresults$Rsquared[1], rpartresults$RMSE[1], rpartresults$MAE[1], rpartperf)
+PerfMetrics[4,] <- c("RF", rfresults$Rsquared[1], rfresults$RMSE[1], rfresults$MAE[1],rfperf)
+PerfMetrics[5,] <- c("TBAG", tbagresults$Rsquared[1], tbagresults$RMSE[1], tbagresults$MAE[1],tbagperf)
+PerfMetrics[6,] <- c("M5", qregresults$Rsquared[1], qregresults$RMSE[1], qregresults$MAE[1], qregperf)
+PerfMetrics[7,] <- c("QRF", qrtresults$Rsquared[1], qrtresults$RMSE[1], qrtresults$MAE[1],qrfperf)
+PerfMetrics[8,] <- c("MARS-Earth", earthresults$Rsquared[1], earthresults$RMSE[1], earthresults$MAE[1], earthperf)
+PerfMetrics[9,] <- c("Cubist", xyfresults$Rsquared[1], xyfresults$RMSE[1], xyfresults$MAE[1], xyfperf)
+PerfMetrics[10,] <- c("BRNN", brnnresults$Rsquared[1], brnnresults$RMSE[1], brnnresults$MAE[1],brnnperf)
+
+glmerr <- ErrStat(preglm2, testset)
+lmerr <- ErrStat(predlm2, testset)
+rparterr <- ErrStat(predrpart2, testset)
+rferr <- ErrStat(predrf2, testset)
+tbagerr <- ErrStat(predtbag2, testset)
+qregerr <- ErrStat(predqreg2, testset)
+qrferr <- ErrStat(predqrf2, testset)
+eartherr <- ErrStat(predearth2, testset)
+xyferr <- ErrStat(predxyf2, testset)
+brnnerr <- ErrStat(predbrnn2, testset)
+
+Errors <- data.frame(matrix(0, nrow=10, ncol=10))
+names(Errors) <- c("Method", "TP", "FP", "FN", "TN", "Sens", "Specs", "PosPredVal", "NegPredVal", "Acc")
+
+Errors[1,] <- c("GLM", glmerr)
+Errors[2,] <- c("KKNN", lmerr)
+Errors[3,] <- c("Brridge", rparterr)
+Errors[4,] <- c("RF", rferr)
+Errors[5,] <- c("TBAG", tbagerr)
+Errors[6,] <- c("M5", qregerr)
+Errors[7,] <- c("QRF", qrferr)
+Errors[8,] <- c("MARS-Earth", eartherr)
+Errors[9,] <- c("Cubist", xyferr)
+Errors[10,] <- c("BRNN", brnnerr)
+
+```
+As seen in Table 2, the performance ranges by method and by the randomly sampled LOOCV method used to split the training data set. Overall, the top performers across the training subset included the quantile random forest (QRF), k-nearest neighbors (KKNN), random forest (RF), cubist (cubist), and the model tree (M5), which all achieved an R^2 value of greater than 0.9 for both the training and testing subsets. The worst performers included the multivariate adaptive regression (earth), general linear model (GLM), and the bayesian ridge regression (bridge). 
+
+These results vary when the models were used to predict values based on the testing subset. The same best and worse performers occur, but with some slight changes. The best performers improved in terms of R^2 value overall with use of the testing subset. For example, the model tree (M5) R^2 value changed from ~0.914 on the training subset to ~0.941 on the testing subset. Similarly, two of the worst performing ML algorithms -- namely the Bridge and GLM models -- R^2 value decreased from the training subset to the testing subset. Interestingly, the worst performing algorithm  (MARS-earth) R^2 value increased significantly across the data split. The BRNN model R^2 also increased. These trends seem to reflect the differences noted earlier between the two distributions and the LOOCV approach by random sampling contributed to this occurrence in addition to the method inherent in each model.
+
+```{r PerfMetrics, echo=FALSE}
+print(PerfMetrics)
+```
+**Table 2 R2, RMSE, & MAE by Method:** Comparison table showing the R2, RMSE, and MAE values by method against the training and testing datasets.
+
+The trends found in the performance metrics reflected in the error metrics, as seen in Table 3. The top performers according to the error metrics included quantile random forest (QRF), cubist (Cubist), K-nearest neighbors (KKNN), and random forest (RF), which all produced the fewest FP and FN values of the ten algorithms tested.  The differences in terms of the performance and error metrics between these four algorithms is small. Additional looks at the error versus model parameters and their confusion matrices helped to narrow the decision of which model to choose between the top 4: k-nearest neighbors (KKNN), random forest (RF), quantile random forest (QRF), and Cubist (cubist).
+```{r Errors, echo=FALSE}
+print(Errors)
+```
+**Table 3 Error Statistics by Method for the Correct Barbell Execution (classe = A or 1):** Comparison showing values of true positives (TP), false positives (FP), false negatives (FN), true negatives (TN), sensitivity (Sens), specificity (Specs), positive predictive value (PosPredVal), negative predictive value (NegPredVal), and accuracy (Acc) by ML algorithm.
+
+The final models of the random forest (RF),  quantile random forest (QRF), and K-nearest neighbors models are shown in Figure 2. The k-nearest neighbors model with fewer number of clusters as shown by the lower mean squared error for k = 4 or less. The quantile random forest and random forest model achieved almost identical plots of error versus number of trees. Both were able to achieve an error rate of 0.05 with less than 100 trees. The k-nearest neighbors model performed better than the random forest model overall in terms of its performance and error metrics, but both perform worse than the cubist and quantile random forest models in terms of their error metrics. The quantile random forest model and the cubist model also possess very similar performance and error metrics. An additional look at the confusion matrices for these four models was performed.
+
+```{r fitrf, echo=FALSE, error=TRUE, fig.width=8, fig.height=6}
+par(mfrow=c(2,2))
+plot(fitlm$finalModel, main="KKNN: Error vs K")
+plot(fitrf$finalModel, main="RF Error vs Trees")
+plot(fitqrf$finalModel, main="QRF Error vs Trees")
+```
+
+**Figure 2 Model Error Plots:** Plots of error rates for the KKNN, RF, and QRF final models showing changes in error rate with respect to k number of clusters, error versus RF number of trees trees, and error versus QRF number of trees, respectively.
+
+```{r echo=FALSE, message =FALSE, fig.width=10, fig.height=9}
+# Create confusion matrices or dataframes from top performing results.
+library(tibble); library(ggpubr); library(cvms)
+library(gridExtra)
+dflm <- tibble("PredictedExercise" = predlm2, "ActualExercise" = testset$classe)
+cfmlm <- confusion_matrix(targets = dflm$ActualExercise, predictions = dflm$PredictedExercise)
+
+dfrf <- tibble("PredictedExercise" = predrf2, "ActualExercise" = testset$classe)
+cfmrf <- confusion_matrix(targets = dfrf$ActualExercise, predictions = dfrf$PredictedExercise)
+
+dfqrf <- tibble("PredictedExercise" = predqrf2, "ActualExercise" = testset$classe)
+cfmqrf <- confusion_matrix(targets = dfqrf$ActualExercise, predictions = dfqrf$PredictedExercise)
+
+dfxyf <- tibble("PredictedExercise" = predxyf2, "ActualExercise" = testset$classe)
+cfmxyf <- confusion_matrix(targets = dfxyf$ActualExercise, predictions = dfxyf$PredictedExercise)
+
+# Plot the confusion matrices of each method.
+cfmlmplot <- plot_confusion_matrix(cfmlm$'Confusion Matrix'[[1]], add_sums = TRUE, add_normalized = FALSE, add_col_percentages = FALSE, add_row_percentages = FALSE, sums_settings = sum_tile_settings(label="Totals"), font_counts = font(size=2)) + ggtitle("(1) KKNN Confusion Matrix")
+
+cfmrfplot <- plot_confusion_matrix(cfmrf$'Confusion Matrix'[[1]], add_sums = TRUE, add_normalized = FALSE, add_col_percentages = FALSE, add_row_percentages = FALSE, sums_settings = sum_tile_settings(label="Totals"), font_counts = font(size=2)) + ggtitle("(2) RF Confusion Matrix")
+
+cfmqrfplot <- plot_confusion_matrix(cfmqrf$'Confusion Matrix'[[1]], add_sums = TRUE, add_normalized = FALSE, add_col_percentages = FALSE, add_row_percentages = FALSE, sums_settings = sum_tile_settings(label="Totals"), font_counts = font(size=2)) + ggtitle("(3) QRF Confusion Matrix")
+
+cfmxyfplot <- plot_confusion_matrix(cfmxyf$'Confusion Matrix'[[1]], add_sums = TRUE, add_normalized = FALSE, add_col_percentages = FALSE, add_row_percentages = FALSE, sums_settings = sum_tile_settings(label="Totals"), font_counts = font(size=2)) + ggtitle("(4) Cubist Confusion Matrix")
+
+# Output the plots as a graphic.
+#show(ggarrange(cfmlmplot, cfmrfplot, cfmqrfplot, cfmxyfplot, ncol = 2, nrow = 2))
+#show(grid.arrange(cfmlmplot, cfmrfplot, cfmqrfplot, cfmxyfplot, ncol = 2, nrow = 2))
+finalplot <- ggarrange(cfmlmplot, cfmrfplot, cfmqrfplot, cfmxyfplot, ncol = 2, nrow = 2)
+```
+
+```{r echo=FALSE}
+print(finalplot)
+```
+
+***Figure 3 Confusion Matrices for Top 4 Performing ML Algorithms:*** (1) K-Nearest Neighbors (KKNN), (2) Random Forest (RF), (3) Quantile Random Forest (QRF), and (4) Cubist (cubist). Each graph captures the total counts in the column and row labeled with symbol for summation.
+
+As seen in Figure 3, the FN/FP counts reveal more information about the performance of each algorithm with respect to predicting each barbell execution type (classe equals "A" or 1 for correct execution and "B" or 2 and so forth for incorrect execution). The k-nearest neighbors model generated fewer FN/FP than the random forest model (the worst performer of the top four), but overall the k-nearest neighbors model performed worse than the quantile random forest and the cubist models. Between these latter two models, the quantile random forest generated fewer FP and FN than the cubist model but it does tend to both over and under classify more than the cubist model. The cubist model, however, consistently produced more FN and FP for each classe compared to the quantile random forest model.
+
+## Conclusions
+
+Ten different ML algorithms were tested and compared to find the best predictor of activity recognition of a correct barbell curl (represented in the HAR dataset by classe equal to "A" or 1). When conducting the data analysis, the quantile random forest (QRF), cubist (cubist), k-nearest neighbors (KKNN), and random forest (RF) models produced the greatest number of true positives/false negatives and the lowest number of false positives/false negatives while achieving the highest r-squared values of the other methods tested. Between these four models, there are slight differences in their performance metrics but greater difference in their error metrics. The differences in TP/TN and FN/FP  values between these two algorithms are significant and the quantile random forest (QRF) model performed better than other top performers. In conclusion, the quantile random forest (QRF) model performs best and was chosen to test against the quiz data set (aka the test data set included in the file "pml-testing.csv") for the assessment in this final project of the Practical Machine Learning course from John Hopkins University on Coursera.
+
+## Citation
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
